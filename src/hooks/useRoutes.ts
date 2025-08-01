@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { routesService, GetRoutesParams } from '@/services/routes.service';
 import { NewRoute, Route } from '@/lib/db/schema';
 import toast from 'react-hot-toast';
@@ -12,46 +12,44 @@ export function useRoutes(params?: GetRoutesParams) {
         limit: 10,
         total: 0,
     });
-    const isMounted = useRef(true);
-    const paramsRef = useRef(params);
 
-    // Update params ref when params change
-    useEffect(() => {
-        paramsRef.current = params;
-    }, [params]);
+    const stableParams = useMemo(() => params, [JSON.stringify(params)]);
 
-    const fetchRoutes = useCallback(async (newParams?: GetRoutesParams) => {
-        if (!isMounted.current) return;
-
+    const fetchRoutes = async (signal?: AbortSignal, overrideParams?: GetRoutesParams) => {
         try {
             setLoading(true);
             setError(null);
-            const currentParams = paramsRef.current;
-            const response = await routesService.getRoutes({ ...currentParams, ...newParams });
-            if (isMounted.current) {
-                setRoutes(response.routes);
-                setPagination(response.pagination);
+
+            const mergedParams = { ...stableParams, ...overrideParams };
+            const response = await routesService.getRoutes(mergedParams, { signal });
+
+            if (!response || !response.routes || !response.pagination) {
+                throw new Error('Invalid response from server');
             }
-        } catch (error: unknown) {
-            if (isMounted.current) {
-                const message = error instanceof Error ? error.message : 'Failed to fetch routes';
-                setError(message);
-                toast.error(message);
-            }
+
+            setRoutes(response.routes);
+            setPagination(response.pagination);
+        } catch (error: any) {
+            if (signal?.aborted) return;
+            const message = error instanceof Error ? error.message : 'Failed to fetch routes';
+            setError(message);
+            toast.error(message);
         } finally {
-            if (isMounted.current) {
+            if (!signal?.aborted) {
                 setLoading(false);
             }
         }
-    }, []);
+    };
+
+    const refetch = (overrideParams?: GetRoutesParams) => fetchRoutes(undefined, overrideParams);
 
     const createRoute = async (data: NewRoute) => {
         try {
             const response = await routesService.createRoute(data);
-            await fetchRoutes();
+            await refetch();
             toast.success(response.message);
             return { success: true, route: response.route };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to create route';
             toast.error(message);
             return { success: false, error: message };
@@ -66,7 +64,7 @@ export function useRoutes(params?: GetRoutesParams) {
             ));
             toast.success(response.message);
             return { success: true, route: response.route };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to update route';
             toast.error(message);
             return { success: false, error: message };
@@ -79,7 +77,7 @@ export function useRoutes(params?: GetRoutesParams) {
             setRoutes(prev => prev.filter(route => route.id !== id));
             toast.success(response.message);
             return { success: true };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to delete route';
             toast.error(message);
             return { success: false, error: message };
@@ -87,22 +85,20 @@ export function useRoutes(params?: GetRoutesParams) {
     };
 
     useEffect(() => {
-        isMounted.current = true;
-        fetchRoutes();
+        const controller = new AbortController();
+        fetchRoutes(controller.signal);
 
-        return () => {
-            isMounted.current = false;
-        };
-    }, [fetchRoutes]);
+        return () => controller.abort();
+    }, [stableParams]);
 
     return {
         routes,
         loading,
         error,
         pagination,
-        refetch: fetchRoutes,
+        refetch,
         createRoute,
         updateRoute,
         deleteRoute,
     };
-} 
+}

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, ilike, or } from 'drizzle-orm';
+import { and, ilike, or, count } from 'drizzle-orm';
 import { db } from '@/lib/db/connection';
 import { drivers } from '@/lib/db/schema';
 import { getAuthenticatedUser, requireRole, AuthenticationError, AuthorizationError } from '@/lib/auth/service';
@@ -26,6 +26,13 @@ export async function GET(request: NextRequest) {
             ));
         }
 
+        // Get total count
+        const totalCount = await db
+            .select({ count: count() })
+            .from(drivers)
+            .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+        // Get results
         const results = conditions.length > 0
             ? await db.select().from(drivers).where(and(...conditions)).limit(limit).offset(offset)
             : await db.select().from(drivers).limit(limit).offset(offset);
@@ -35,7 +42,7 @@ export async function GET(request: NextRequest) {
             pagination: {
                 page,
                 limit,
-                total: results.length,
+                total: totalCount[0]?.count || 0,
             },
         };
 

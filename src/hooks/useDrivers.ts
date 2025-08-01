@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { driversService, GetDriversParams } from '@/services/drivers.service';
 import { NewDriver, Driver } from '@/lib/db/schema';
 import toast from 'react-hot-toast';
@@ -12,46 +12,43 @@ export function useDrivers(params?: GetDriversParams) {
         limit: 10,
         total: 0,
     });
-    const isMounted = useRef(true);
-    const paramsRef = useRef(params);
 
-    // Update params ref when params change
-    useEffect(() => {
-        paramsRef.current = params;
-    }, [params]);
+    const stableParams = useMemo(() => params, [JSON.stringify(params)]);
 
-    const fetchDrivers = useCallback(async (newParams?: GetDriversParams) => {
-        if (!isMounted.current) return;
-
+    const fetchDrivers = async (signal?: AbortSignal) => {
         try {
             setLoading(true);
             setError(null);
-            const currentParams = paramsRef.current;
-            const response = await driversService.getDrivers({ ...currentParams, ...newParams });
-            if (isMounted.current) {
-                setDrivers(response.drivers);
-                setPagination(response.pagination);
+            const response = await driversService.getDrivers(stableParams, { signal });
+
+            if (!response || !response.drivers || !response.pagination) {
+                throw new Error('Invalid response from server');
             }
-        } catch (error: unknown) {
-            if (isMounted.current) {
-                const message = error instanceof Error ? error.message : 'Failed to fetch drivers';
-                setError(message);
-                toast.error(message);
-            }
+
+            setDrivers(response.drivers);
+            setPagination(response.pagination);
+        } catch (error: any) {
+            if (signal?.aborted) return;
+
+            const message = error instanceof Error ? error.message : 'Failed to fetch drivers';
+            setError(message);
+            toast.error(message);
         } finally {
-            if (isMounted.current) {
+            if (!signal?.aborted) {
                 setLoading(false);
             }
         }
-    }, []);
+    };
+
+    const refetch = () => fetchDrivers();
 
     const createDriver = async (data: NewDriver) => {
         try {
             const response = await driversService.createDriver(data);
-            await fetchDrivers();
+            await refetch();
             toast.success(response.message);
             return { success: true, driver: response.driver };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to create driver';
             toast.error(message);
             return { success: false, error: message };
@@ -66,7 +63,7 @@ export function useDrivers(params?: GetDriversParams) {
             ));
             toast.success(response.message);
             return { success: true, driver: response.driver };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to update driver';
             toast.error(message);
             return { success: false, error: message };
@@ -79,7 +76,7 @@ export function useDrivers(params?: GetDriversParams) {
             setDrivers(prev => prev.filter(driver => driver.id !== id));
             toast.success(response.message);
             return { success: true };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to delete driver';
             toast.error(message);
             return { success: false, error: message };
@@ -87,22 +84,22 @@ export function useDrivers(params?: GetDriversParams) {
     };
 
     useEffect(() => {
-        isMounted.current = true;
-        fetchDrivers();
+        const controller = new AbortController();
+        fetchDrivers(controller.signal);
 
         return () => {
-            isMounted.current = false;
+            controller.abort();
         };
-    }, [fetchDrivers]);
+    }, [stableParams]);
 
     return {
         drivers,
         loading,
         error,
         pagination,
-        refetch: fetchDrivers,
+        refetch,
         createDriver,
         updateDriver,
         deleteDriver,
     };
-} 
+}

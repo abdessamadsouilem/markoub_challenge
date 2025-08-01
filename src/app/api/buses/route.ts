@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ilike } from 'drizzle-orm';
+import { and, ilike, or, count } from 'drizzle-orm';
 import { db } from '@/lib/db/connection';
 import { buses } from '@/lib/db/schema';
 import { getAuthenticatedUser, requireRole, AuthenticationError, AuthorizationError } from '@/lib/auth/service';
@@ -17,23 +17,35 @@ export async function GET(request: NextRequest) {
 
         const offset = (page - 1) * limit;
 
-        let whereCondition = undefined;
+        const conditions = [];
+
         if (search) {
-            whereCondition = ilike(buses.plateNumber, `%${search}%`);
+            conditions.push(or(
+                ilike(buses.plateNumber, `%${search}%`)
+            ));
         }
 
-        const results = whereCondition
-            ? await db.select().from(buses).where(whereCondition).limit(limit).offset(offset)
+        // Get total count
+        const totalCount = await db
+            .select({ count: count() })
+            .from(buses)
+            .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+        // Get results
+        const results = conditions.length > 0
+            ? await db.select().from(buses).where(and(...conditions)).limit(limit).offset(offset)
             : await db.select().from(buses).limit(limit).offset(offset);
 
-        return NextResponse.json({
+        const response = {
             buses: results,
             pagination: {
                 page,
                 limit,
-                total: results.length,
+                total: totalCount[0]?.count || 0,
             },
-        });
+        };
+
+        return NextResponse.json(response);
     } catch (error) {
         if (error instanceof AuthenticationError) {
             return NextResponse.json({ error: error.message }, { status: 401 });
@@ -47,7 +59,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const user = await getAuthenticatedUser(request);
-        requireRole(user.role, ['admin']);
+        requireRole(user.role, ['admin', 'dispatcher']);
 
         const body = await request.json();
         const validatedData = createBusSchema.parse(body);

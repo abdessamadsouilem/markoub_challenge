@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/dashboard-layout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,8 +22,9 @@ interface DriverFormData {
 export default function DriversPage() {
     const { user } = useAuth();
     const [searchTerm, setSearchTerm] = useState('');
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const { drivers, loading, createDriver, updateDriver, deleteDriver } = useDrivers({
-        search: searchTerm,
+        search: debouncedSearchTerm,
         limit: 50,
     });
 
@@ -34,6 +35,15 @@ export default function DriversPage() {
         licenseNumber: '',
         available: true,
     });
+
+    // Debounce search term
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearchTerm(searchTerm);
+        }, 300);
+
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
 
     const canCreate = user && canUserPerformAction(user.role, 'create', 'drivers');
     const canEdit = user && canUserPerformAction(user.role, 'edit', 'drivers');
@@ -101,7 +111,6 @@ export default function DriversPage() {
                         </Button>
                     )}
                 </div>
-
 
                 <Card className="border-orange-200">
                     <CardContent className="p-4">
@@ -188,7 +197,6 @@ export default function DriversPage() {
                     </Card>
                 )}
 
-
                 <Card className="border-orange-200">
                     <CardHeader>
                         <CardTitle className="text-orange-600">All Drivers</CardTitle>
@@ -198,8 +206,13 @@ export default function DriversPage() {
                     </CardHeader>
                     <CardContent>
                         {loading ? (
-                            <div className="flex justify-center items-center py-8">
-                                <div className="animate-spin -full h-8 w-8 border-b-2 border-orange-600"></div>
+                            <div className="text-center py-8">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mx-auto"></div>
+                                <p className="mt-2 text-gray-600">Loading drivers...</p>
+                            </div>
+                        ) : drivers.length === 0 ? (
+                            <div className="text-center py-8">
+                                <p className="text-gray-500">No drivers found.</p>
                             </div>
                         ) : (
                             <Table>
@@ -209,7 +222,7 @@ export default function DriversPage() {
                                         <TableHead>License Number</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead>Created</TableHead>
-                                        <TableHead>Actions</TableHead>
+                                        <TableHead className="text-right">Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -218,15 +231,15 @@ export default function DriversPage() {
                                             <TableCell className="font-medium">{driver.name}</TableCell>
                                             <TableCell>{driver.licenseNumber}</TableCell>
                                             <TableCell>
-                                                <div className="flex items-center">
+                                                <div className="flex items-center space-x-2">
                                                     {driver.available ? (
                                                         <>
-                                                            <UserCheck className="w-4 h-4 text-green-600 mr-2" />
+                                                            <UserCheck className="w-4 h-4 text-green-600" />
                                                             <span className="text-green-600">Available</span>
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <UserX className="w-4 h-4 text-red-600 mr-2" />
+                                                            <UserX className="w-4 h-4 text-red-600" />
                                                             <span className="text-red-600">Unavailable</span>
                                                         </>
                                                     )}
@@ -235,8 +248,8 @@ export default function DriversPage() {
                                             <TableCell>
                                                 {new Date(driver.createdAt).toLocaleDateString()}
                                             </TableCell>
-                                            <TableCell>
-                                                <div className="flex space-x-2">
+                                            <TableCell className="text-right">
+                                                <div className="flex justify-end space-x-2">
                                                     {canEdit && (
                                                         <Button
                                                             variant="outline"
@@ -266,8 +279,6 @@ export default function DriversPage() {
                         )}
                     </CardContent>
                 </Card>
-
-
             </div>
         </DashboardLayout>
     );

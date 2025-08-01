@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq, and, or, gte, lte, not, ilike } from 'drizzle-orm';
+import { eq, and, or, gte, lte, not, ilike, count } from 'drizzle-orm';
 import { db } from '@/lib/db/connection';
 import { shifts, drivers, buses, routes } from '@/lib/db/schema';
 import { getAuthenticatedUser, requireRole, AuthenticationError, AuthorizationError } from '@/lib/auth/service';
@@ -333,8 +333,6 @@ export async function GET(request: NextRequest) {
         const driverId = searchParams.get('driverId');
         const busId = searchParams.get('busId');
 
-
-
         const offset = (page - 1) * limit;
 
         const conditions = [];
@@ -358,10 +356,6 @@ export async function GET(request: NextRequest) {
         if (busId) {
             conditions.push(eq(shifts.busId, parseInt(busId)));
         }
-
-
-
-
 
         const baseQuery = db
             .select({
@@ -392,7 +386,17 @@ export async function GET(request: NextRequest) {
             .leftJoin(buses, eq(shifts.busId, buses.id))
             .leftJoin(routes, eq(shifts.routeId, routes.id));
 
+        // Get total count
+        const totalCountQuery = db
+            .select({ count: count() })
+            .from(shifts)
+            .leftJoin(drivers, eq(shifts.driverId, drivers.id))
+            .leftJoin(buses, eq(shifts.busId, buses.id))
+            .leftJoin(routes, eq(shifts.routeId, routes.id));
+
         let results;
+        let totalCount;
+
         if (search) {
             // Add search conditions
             const searchConditions = or(
@@ -404,29 +408,30 @@ export async function GET(request: NextRequest) {
 
             if (conditions.length > 0) {
                 results = await baseQuery.where(and(...conditions, searchConditions)).limit(limit).offset(offset);
+                totalCount = await totalCountQuery.where(and(...conditions, searchConditions));
             } else {
                 results = await baseQuery.where(searchConditions).limit(limit).offset(offset);
+                totalCount = await totalCountQuery.where(searchConditions);
             }
-
         } else {
-            results = conditions.length > 0
-                ? await baseQuery.where(and(...conditions)).limit(limit).offset(offset)
-                : await baseQuery.limit(limit).offset(offset);
+            if (conditions.length > 0) {
+                results = await baseQuery.where(and(...conditions)).limit(limit).offset(offset);
+                totalCount = await totalCountQuery.where(and(...conditions));
+            } else {
+                results = await baseQuery.limit(limit).offset(offset);
+                totalCount = await totalCountQuery;
+            }
         }
-
-
 
         return NextResponse.json({
             shifts: results,
             pagination: {
                 page,
                 limit,
-                total: results.length,
+                total: totalCount[0]?.count || 0,
             },
         });
-
     } catch (error) {
-        console.error('❌ GET /api/shifts error:', error);
         return handleShiftError(error);
     }
 }

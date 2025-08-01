@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { shiftsService, GetShiftsParams } from '@/services/shifts.service';
 import { NewShift, ShiftWithDetails } from '@/lib/db/schema';
 import toast from 'react-hot-toast';
@@ -12,46 +12,45 @@ export function useShifts(params?: GetShiftsParams) {
         limit: 10,
         total: 0,
     });
-    const isMounted = useRef(true);
-    const paramsRef = useRef(params);
 
-    // Update params ref when params change
-    useEffect(() => {
-        paramsRef.current = params;
-    }, [params]);
+    const stableParams = useMemo(() => params, [JSON.stringify(params)]);
 
-    const fetchShifts = useCallback(async (newParams?: GetShiftsParams) => {
-        if (!isMounted.current) return;
-
+    const fetchShifts = async (signal?: AbortSignal, overrideParams?: GetShiftsParams) => {
         try {
             setLoading(true);
             setError(null);
-            const currentParams = paramsRef.current;
-            const response = await shiftsService.getShifts({ ...currentParams, ...newParams });
-            if (isMounted.current) {
-                setShifts(response.shifts);
-                setPagination(response.pagination);
+
+            const mergedParams = { ...stableParams, ...overrideParams };
+            const response = await shiftsService.getShifts(mergedParams, { signal });
+
+            if (!response || !response.shifts || !response.pagination) {
+                throw new Error('Invalid response from server');
             }
-        } catch (error: unknown) {
-            if (isMounted.current) {
-                const message = error instanceof Error ? error.message : 'Failed to fetch shifts';
-                setError(message);
-                toast.error(message);
-            }
+
+            setShifts(response.shifts);
+            setPagination(response.pagination);
+        } catch (error: any) {
+            if (signal?.aborted) return;
+            const message = error instanceof Error ? error.message : 'Failed to fetch shifts';
+            setError(message);
+            toast.error(message);
         } finally {
-            if (isMounted.current) {
+            if (!signal?.aborted) {
                 setLoading(false);
             }
         }
-    }, []);
+    };
+
+    const refetch = (overrideParams?: GetShiftsParams) =>
+        fetchShifts(undefined, overrideParams);
 
     const createShift = async (data: NewShift) => {
         try {
             const response = await shiftsService.createShift(data);
-            await fetchShifts();
+            await refetch();
             toast.success(response.message);
             return { success: true, shift: response.shift };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to create shift';
             toast.error(message);
             return { success: false, error: message };
@@ -61,10 +60,10 @@ export function useShifts(params?: GetShiftsParams) {
     const updateShift = async (id: number, data: Partial<NewShift>) => {
         try {
             const response = await shiftsService.updateShift(id, data);
-            await fetchShifts(); // Refetch to get updated data with relations
+            await refetch();
             toast.success(response.message);
             return { success: true, shift: response.shift };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to update shift';
             toast.error(message);
             return { success: false, error: message };
@@ -77,7 +76,7 @@ export function useShifts(params?: GetShiftsParams) {
             setShifts(prev => prev.filter(shift => shift.id !== id));
             toast.success(response.message);
             return { success: true };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to delete shift';
             toast.error(message);
             return { success: false, error: message };
@@ -85,22 +84,19 @@ export function useShifts(params?: GetShiftsParams) {
     };
 
     useEffect(() => {
-        isMounted.current = true;
-        fetchShifts();
-
-        return () => {
-            isMounted.current = false;
-        };
-    }, [fetchShifts]);
+        const controller = new AbortController();
+        fetchShifts(controller.signal);
+        return () => controller.abort();
+    }, [stableParams]);
 
     return {
         shifts,
         loading,
         error,
         pagination,
-        refetch: fetchShifts,
+        refetch,
         createShift,
         updateShift,
         deleteShift,
     };
-} 
+}

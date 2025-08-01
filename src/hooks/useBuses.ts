@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { busesService, GetBusesParams } from '@/services/buses.service';
 import { NewBus, Bus } from '@/lib/db/schema';
 import toast from 'react-hot-toast';
@@ -12,46 +12,44 @@ export function useBuses(params?: GetBusesParams) {
         limit: 10,
         total: 0,
     });
-    const isMounted = useRef(true);
-    const paramsRef = useRef(params);
 
-    // Update params ref when params change
-    useEffect(() => {
-        paramsRef.current = params;
-    }, [params]);
+    const stableParams = useMemo(() => params, [JSON.stringify(params)]);
 
-    const fetchBuses = useCallback(async (newParams?: GetBusesParams) => {
-        if (!isMounted.current) return;
-
+    const fetchBuses = async (signal?: AbortSignal, overrideParams?: GetBusesParams) => {
         try {
             setLoading(true);
             setError(null);
-            const currentParams = paramsRef.current;
-            const response = await busesService.getBuses({ ...currentParams, ...newParams });
-            if (isMounted.current) {
-                setBuses(response.buses);
-                setPagination(response.pagination);
+
+            const mergedParams = { ...stableParams, ...overrideParams };
+            const response = await busesService.getBuses(mergedParams, { signal });
+
+            if (!response || !response.buses || !response.pagination) {
+                throw new Error('Invalid response from server');
             }
-        } catch (error: unknown) {
-            if (isMounted.current) {
-                const message = error instanceof Error ? error.message : 'Failed to fetch buses';
-                setError(message);
-                toast.error(message);
-            }
+
+            setBuses(response.buses);
+            setPagination(response.pagination);
+        } catch (error: any) {
+            if (signal?.aborted) return;
+            const message = error instanceof Error ? error.message : 'Failed to fetch buses';
+            setError(message);
+            toast.error(message);
         } finally {
-            if (isMounted.current) {
+            if (!signal?.aborted) {
                 setLoading(false);
             }
         }
-    }, []);
+    };
+
+    const refetch = (overrideParams?: GetBusesParams) => fetchBuses(undefined, overrideParams);
 
     const createBus = async (data: NewBus) => {
         try {
             const response = await busesService.createBus(data);
-            await fetchBuses();
+            await refetch();
             toast.success(response.message);
             return { success: true, bus: response.bus };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to create bus';
             toast.error(message);
             return { success: false, error: message };
@@ -66,7 +64,7 @@ export function useBuses(params?: GetBusesParams) {
             ));
             toast.success(response.message);
             return { success: true, bus: response.bus };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to update bus';
             toast.error(message);
             return { success: false, error: message };
@@ -79,7 +77,7 @@ export function useBuses(params?: GetBusesParams) {
             setBuses(prev => prev.filter(bus => bus.id !== id));
             toast.success(response.message);
             return { success: true };
-        } catch (error: unknown) {
+        } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Failed to delete bus';
             toast.error(message);
             return { success: false, error: message };
@@ -87,22 +85,20 @@ export function useBuses(params?: GetBusesParams) {
     };
 
     useEffect(() => {
-        isMounted.current = true;
-        fetchBuses();
+        const controller = new AbortController();
+        fetchBuses(controller.signal);
 
-        return () => {
-            isMounted.current = false;
-        };
-    }, [fetchBuses]);
+        return () => controller.abort();
+    }, [stableParams]);
 
     return {
         buses,
         loading,
         error,
         pagination,
-        refetch: fetchBuses,
+        refetch,
         createBus,
         updateBus,
         deleteBus,
     };
-} 
+}

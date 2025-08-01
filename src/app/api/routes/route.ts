@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ilike, or } from 'drizzle-orm';
+import { and, ilike, or, count } from 'drizzle-orm';
 import { db } from '@/lib/db/connection';
 import { routes } from '@/lib/db/schema';
 import { getAuthenticatedUser, requireRole, AuthenticationError, AuthorizationError } from '@/lib/auth/service';
@@ -17,26 +17,36 @@ export async function GET(request: NextRequest) {
 
         const offset = (page - 1) * limit;
 
-        let whereCondition = undefined;
+        const conditions = [];
+
         if (search) {
-            whereCondition = or(
+            conditions.push(or(
                 ilike(routes.origin, `%${search}%`),
                 ilike(routes.destination, `%${search}%`)
-            );
+            ));
         }
 
-        const results = whereCondition
-            ? await db.select().from(routes).where(whereCondition).limit(limit).offset(offset)
+        // Get total count
+        const totalCount = await db
+            .select({ count: count() })
+            .from(routes)
+            .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+        // Get results
+        const results = conditions.length > 0
+            ? await db.select().from(routes).where(and(...conditions)).limit(limit).offset(offset)
             : await db.select().from(routes).limit(limit).offset(offset);
 
-        return NextResponse.json({
+        const response = {
             routes: results,
             pagination: {
                 page,
                 limit,
-                total: results.length,
+                total: totalCount[0]?.count || 0,
             },
-        });
+        };
+
+        return NextResponse.json(response);
     } catch (error) {
         if (error instanceof AuthenticationError) {
             return NextResponse.json({ error: error.message }, { status: 401 });
@@ -61,17 +71,13 @@ export async function POST(request: NextRequest) {
             route: newRoute[0],
             message: 'Route created successfully',
         }, { status: 201 });
-    } catch (error) {
+    } catch (error: unknown) {
         if (error instanceof AuthenticationError) {
             return NextResponse.json({ error: error.message }, { status: 401 });
         }
 
         if (error instanceof AuthorizationError) {
             return NextResponse.json({ error: error.message }, { status: 403 });
-        }
-
-        if (error instanceof Error && error.name === 'ZodError') {
-            return NextResponse.json({ error: 'Invalid input data' }, { status: 400 });
         }
 
         console.error('Create route error:', error);
